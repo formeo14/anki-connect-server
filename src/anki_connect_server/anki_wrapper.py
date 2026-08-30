@@ -61,6 +61,9 @@ class AnkiWrapper:
                 self._closed = True
 
     def _reopen_collection(self) -> None:
+        if not self._closed:
+            self.close()
+        logger.debug("Reopening Anki collection at %s", self.collection_path)
         self.col = Collection(self.collection_path)
         self._closed = False
         self._collection_generation += 1
@@ -101,8 +104,22 @@ class AnkiWrapper:
         self._closed = True
         try:
             self.col.full_upload_or_download(auth=auth, server_usn=server_usn, upload=False)
+            # The backend reopens the collection internally after a full
+            # download, but the Python-side db handle is still None. Reattach
+            # it with reopen(after_full_sync=True) instead of constructing a
+            # new Collection (which would error with "Anki already open").
+            self.col.reopen(after_full_sync=True)
+            self._closed = False
+            self._collection_generation += 1
+            logger.debug(
+                "Reattached Anki collection at %s after full download",
+                self.collection_path,
+            )
         finally:
-            self._reopen_collection()
+            if self._closed:
+                # Download failed; the backend collection is closed, so fall
+                # back to opening a fresh handle.
+                self._reopen_collection()
 
     @staticmethod
     def _media_counters(status: MediaSyncStatusResponse) -> tuple[str, str, str]:

@@ -110,6 +110,10 @@ class TestSyncRequirementResolution:
         assert result.collection.local_data_replaced is True
         mock_col.full_upload_or_download.assert_called_once()
         assert mock_col.full_upload_or_download.call_args[1]["upload"] is False
+        # After a successful full download the backend reopens the collection
+        # internally; the Python side must reattach with reopen(after_full_sync=True)
+        # rather than constructing a new Collection (which would "Anki already open").
+        mock_col.reopen.assert_called_once_with(after_full_sync=True)
 
     def test_full_download_downloads_with_remote_only_reason(self, patched_config):
         """FULL_DOWNLOAD downloads and reports REMOTE_ONLY."""
@@ -121,6 +125,7 @@ class TestSyncRequirementResolution:
         assert result.collection.download_reason is DownloadReason.REMOTE_ONLY
         mock_col.full_upload_or_download.assert_called_once()
         assert mock_col.full_upload_or_download.call_args[1]["upload"] is False
+        mock_col.reopen.assert_called_once_with(after_full_sync=True)
 
     def test_full_upload_raises_and_preserves_local(self, patched_config):
         """FULL_UPLOAD raises SyncError by policy; local data is not uploaded."""
@@ -322,6 +327,9 @@ class TestCollectionGeneration:
             with pytest.raises(SyncError, match="Full collection download failed"):
                 wrapper.sync_to_ankiweb()
 
+        # On failure reopen() must not be called (the backend collection is
+        # closed); _reopen_collection opens a fresh handle instead.
+        mock_col.reopen.assert_not_called()
         # _full_download's finally called _reopen_collection before the
         # SyncError wrapper raised, so generation advanced.
         assert wrapper.collection_generation == 1
