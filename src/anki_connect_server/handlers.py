@@ -11,6 +11,7 @@ from anki_connect_server.types import (
     AddNoteParams,
     AddNotesParams,
     AddTagsParams,
+    ApiReflectParams,
     CardsIdsParams,
     ChangeDeckParams,
     CloneDeckConfigIdParams,
@@ -28,6 +29,7 @@ from anki_connect_server.types import (
     GetIntervalsParams,
     ImportPackageParams,
     JsonObject,
+    JsonValue,
     ModelNameParams,
     ModelStylingUpdateParams,
     ModelTemplateUpdateParams,
@@ -192,16 +194,24 @@ async def handle_update_model_styling(
     await _run(wrapper.update_model_styling, params.model)
 
 
-async def handle_add_note(wrapper: AnkiWrapper, params: AddNoteParams) -> int | None:
-    return await _run(wrapper.add_note, params.note)
+async def handle_add_note(wrapper: AnkiWrapper, params: AddNoteParams) -> int:
+    return await _run(wrapper.add_note, params.note.model_dump())
 
 
-async def handle_add_notes(wrapper: AnkiWrapper, params: AddNotesParams) -> list[int | None]:
-    return await _run(wrapper.add_notes, params.notes)
+async def handle_add_notes(wrapper: AnkiWrapper, params: AddNotesParams) -> list[int]:
+    return await _run(wrapper.add_notes, [note.model_dump() for note in params.notes])
 
 
 async def handle_can_add_notes(wrapper: AnkiWrapper, params: AddNotesParams) -> list[bool]:
-    return await _run(wrapper.can_add_notes, params.notes)
+    return await _run(wrapper.can_add_notes, [note.model_dump() for note in params.notes])
+
+
+async def handle_can_add_notes_with_error_detail(
+    wrapper: AnkiWrapper, params: AddNotesParams
+) -> list[JsonObject]:
+    return await _run(
+        wrapper.can_add_notes_with_error_detail, [note.model_dump() for note in params.notes]
+    )
 
 
 async def handle_update_note_fields(wrapper: AnkiWrapper, params: UpdateNoteFieldsParams) -> None:
@@ -222,6 +232,8 @@ async def handle_get_tags(wrapper: AnkiWrapper, params: EmptyParams) -> list[str
 
 
 async def handle_find_notes(wrapper: AnkiWrapper, params: FindNotesParams) -> list[int]:
+    if params.query is None:
+        return []
     return await _run(wrapper.find_notes, params.query)
 
 
@@ -234,6 +246,8 @@ async def handle_delete_notes(wrapper: AnkiWrapper, params: NotesIdsParams) -> N
 
 
 async def handle_find_cards(wrapper: AnkiWrapper, params: FindCardsParams) -> list[int]:
+    if params.query is None:
+        return []
     return await _run(wrapper.find_cards, params.query)
 
 
@@ -270,8 +284,16 @@ async def handle_get_media_dir_path(wrapper: AnkiWrapper, params: EmptyParams) -
     return await _run(wrapper.get_media_dir_path)
 
 
-async def handle_store_media_file(wrapper: AnkiWrapper, params: StoreMediaFileParams) -> None:
-    await _run(wrapper.store_media_file, params.filename, params.data)
+async def handle_store_media_file(wrapper: AnkiWrapper, params: StoreMediaFileParams) -> str | None:
+    return await _run(
+        wrapper.store_media_file,
+        params.filename,
+        params.data,
+        params.path,
+        params.url,
+        params.skipHash,
+        params.deleteExisting,
+    )
 
 
 async def handle_retrieve_media_file(wrapper: AnkiWrapper, params: FilenameParams) -> str | None:
@@ -291,37 +313,43 @@ async def handle_export_package(wrapper: AnkiWrapper, params: ExportPackageParam
 
 
 async def handle_multi(wrapper: AnkiWrapper, params: MultiParams) -> list[Any]:
-    results: list[Any] = []
-    for action in params.actions:
-        if not isinstance(action, dict):
-            results.append(
-                {"error": f"Invalid action: expected object, got {type(action).__name__}"}
-            )
-            continue
-        action_name = action.get("action", "")
-        if not isinstance(action_name, str):
-            results.append({"error": "Invalid action: 'action' must be a string"})
-            continue
-        entry = ACTION_HANDLERS.get(action_name)
-        if not entry:
-            results.append({"error": f"Unknown action: {action_name}"})
-            continue
-        model_cls, handler = entry
-        action_params = action.get("params", {})
-        if not isinstance(action_params, dict):
-            results.append({"error": f"Invalid params for {action_name}: expected object"})
-            continue
-        try:
-            validated = model_cls(**action_params)
-            result = handler(wrapper, validated)
-            if asyncio.iscoroutine(result):
-                result = await result
-            results.append(result)
-        except Exception as e:
-            # Per-action failure does not abort the whole multi call.
-            # AnkiConnect returns an error string per action.
-            results.append({"error": str(e)})
-    return results
+    return [await _run_sub_action(wrapper, action) for action in params.actions]
+
+
+async def _run_sub_action(wrapper: AnkiWrapper, action: Any) -> Any:
+    if not isinstance(action, dict):
+        return error_reply(f"Invalid action: expected object, got {type(action).__name__}")
+    action_name = action.get("action", "")
+    action_params = action.get("params", {})
+    version = action.get("version", 4)
+    if not isinstance(action_name, str):
+        return error_reply("Invalid action: 'action' must be a string")
+    if not isinstance(action_params, dict):
+        return error_reply(f"Invalid params for {action_name}: expected object")
+    try:
+        result = await dispatch(action_name, action_params, wrapper)
+    except Exception as e:
+        return error_reply(str(e))
+    return success_reply(version if isinstance(version, int) else 4, result)
+
+
+def success_reply(version: int, result: Any) -> Any:
+    if version <= 4:
+        return result
+    return {"result": result, "error": None}
+
+
+def error_reply(message: str) -> JsonObject:
+    return {"result": None, "error": message}
+
+
+async def handle_api_reflect(wrapper: AnkiWrapper, params: ApiReflectParams) -> JsonObject:
+    _ = wrapper
+    if "actions" not in params.scopes:
+        return {"scopes": []}
+    names = params.actions if params.actions is not None else sorted(ACTION_HANDLERS)
+    filtered: list[JsonValue] = [name for name in names if name in ACTION_HANDLERS]
+    return {"scopes": ["actions"], "actions": filtered}
 
 
 # Registry mapping AnkiConnect action names to (pydantic param model, handler).
@@ -353,6 +381,7 @@ ACTION_HANDLERS: dict[str, tuple[type[BaseModel], Handler[Any]]] = {
     "addNote": (AddNoteParams, handle_add_note),
     "addNotes": (AddNotesParams, handle_add_notes),
     "canAddNotes": (AddNotesParams, handle_can_add_notes),
+    "canAddNotesWithErrorDetail": (AddNotesParams, handle_can_add_notes_with_error_detail),
     "updateNoteFields": (UpdateNoteFieldsParams, handle_update_note_fields),
     "addTags": (AddTagsParams, handle_add_tags),
     "removeTags": (AddTagsParams, handle_remove_tags),
@@ -374,6 +403,7 @@ ACTION_HANDLERS: dict[str, tuple[type[BaseModel], Handler[Any]]] = {
     "deleteMediaFile": (FilenameParams, handle_delete_media_file),
     "importPackage": (ImportPackageParams, handle_import_package),
     "exportPackage": (ExportPackageParams, handle_export_package),
+    "apiReflect": (ApiReflectParams, handle_api_reflect),
     "multi": (MultiParams, handle_multi),
 }
 
@@ -382,7 +412,7 @@ async def dispatch(action: str, params: JsonObject, wrapper: AnkiWrapper) -> Any
     entry = ACTION_HANDLERS.get(action)
     if not entry:
         logger.warning(f"Unsupported action requested: {action}")
-        raise ValueError(f"Unsupported action: {action}")
+        raise ValueError("unsupported action")
     model_cls, handler = entry
     try:
         validated = model_cls(**params)

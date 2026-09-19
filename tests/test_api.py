@@ -283,7 +283,7 @@ async def test_unknown_action(app_with_wrapper):
         assert response.status_code == 200
         data = response.json()
         assert data["error"] is not None
-        assert "Unsupported action" in data["error"]
+        assert data["error"] == "unsupported action"
 
 
 @pytest.mark.asyncio
@@ -312,8 +312,10 @@ async def test_validation_error_returns_200_with_error(app_with_wrapper):
     """Client errors (ValueError subclass) are reported in-body with HTTP 200
     per the AnkiConnect convention so existing clients keep working."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # findNotes requires a 'query' param; missing it raises ValidationError.
-        response = await client.post("/", json={"action": "findNotes", "version": 6})
+        # findNotes with a non-string 'query' param raises ValidationError.
+        response = await client.post(
+            "/", json={"action": "findNotes", "version": 6, "params": {"query": 123}}
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["error"] is not None
@@ -322,12 +324,19 @@ async def test_validation_error_returns_200_with_error(app_with_wrapper):
 
 @pytest.mark.asyncio
 async def test_invalid_json(app_with_wrapper):
-    """Test invalid JSON request."""
+    """Test invalid JSON request.
+
+    Like the real AnkiConnect web server, invalid JSON is reported in-body
+    with HTTP 200 and a {"result": null, "error": ...} reply.
+    """
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/", content="invalid json", headers={"Content-Type": "application/json"}
         )
-        assert response.status_code == 422
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"] is None
+        assert data["error"] is not None
 
 
 @pytest.mark.asyncio

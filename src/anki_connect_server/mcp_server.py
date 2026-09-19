@@ -99,7 +99,7 @@ def get_model_field_names(model_name: str) -> list[str]:
 @mcp.tool(annotations=ADDITIVE_WRITE)
 def add_note(
     deck_name: str, model_name: str, fields: dict[str, str], tags: list[str] | None = None
-) -> int | None:
+) -> int:
     """Add a new note to the collection."""
     note: NoteInput = {
         "deckName": deck_name,

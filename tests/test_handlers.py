@@ -57,6 +57,7 @@ from anki_connect_server.types import (
     MultiParams,
     NoteFieldUpdate,
     NoteInput,
+    NotePayload,
     NotesIdsParams,
     UpdateNoteFieldsParams,
 )
@@ -70,6 +71,14 @@ def _note(
         "modelName": model,
         "fields": {"Front": front, "Back": back},
     }
+
+
+def _payload(
+    deck: str = "Default", model: str = "Basic", front: str = "Test", back: str = "Test"
+) -> NotePayload:
+    """Build a NotePayload for the AddNoteParams handlers (which now use the
+    pydantic NotePayload model instead of the plain NoteInput TypedDict)."""
+    return NotePayload(deckName=deck, modelName=model, fields={"Front": front, "Back": back})
 
 
 class TestMiscHandlers:
@@ -194,7 +203,7 @@ class TestNoteHandlers:
     async def test_handle_add_note(self, anki_wrapper):
         """Test addNote handler."""
         result = await handle_add_note(
-            anki_wrapper, AddNoteParams(note=_note(front="Test", back="Answer"))
+            anki_wrapper, AddNoteParams(note=_payload(front="Test", back="Answer"))
         )
         assert result is not None
 
@@ -204,7 +213,10 @@ class TestNoteHandlers:
         result = await handle_add_notes(
             anki_wrapper,
             AddNotesParams(
-                notes=[_note(front="Note1", back="Answer1"), _note(front="Note2", back="Answer2")]
+                notes=[
+                    _payload(front="Note1", back="Answer1"),
+                    _payload(front="Note2", back="Answer2"),
+                ]
             ),
         )
         assert len(result) == 2
@@ -224,7 +236,7 @@ class TestNoteHandlers:
     @pytest.mark.asyncio
     async def test_handle_can_add_notes(self, anki_wrapper):
         """Test canAddNotes handler."""
-        result = await handle_can_add_notes(anki_wrapper, AddNotesParams(notes=[_note()]))
+        result = await handle_can_add_notes(anki_wrapper, AddNotesParams(notes=[_payload()]))
         assert len(result) == 1
         assert result[0] is True
 
@@ -236,13 +248,11 @@ class TestNoteHandlers:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_handle_find_notes_missing_query_raises(self, anki_wrapper):
-        """findNotes without a query must raise -- otherwise Anki returns the
-        entire collection, silently leaking every note id to the caller."""
-        from anki_connect_server.handlers import dispatch
-
-        with pytest.raises(ValueError):
-            await dispatch("findNotes", {}, anki_wrapper)
+    async def test_handle_find_notes_missing_query_returns_empty(self, anki_wrapper):
+        """findNotes with a missing query returns an empty list, like the
+        reference AnkiConnect plugin, instead of leaking the whole collection."""
+        result = await handle_find_notes(anki_wrapper, FindNotesParams())
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_handle_notes_info(self, anki_wrapper):
@@ -270,13 +280,11 @@ class TestCardHandlers:
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
-    async def test_handle_find_cards_missing_query_raises(self, anki_wrapper):
-        """findCards without a query must raise -- otherwise Anki returns the
-        entire collection, silently leaking every card id to the caller."""
-        from anki_connect_server.handlers import dispatch
-
-        with pytest.raises(ValueError):
-            await dispatch("findCards", {}, anki_wrapper)
+    async def test_handle_find_cards_missing_query_returns_empty(self, anki_wrapper):
+        """findCards with a missing query returns an empty list, like the
+        reference AnkiConnect plugin, instead of leaking the whole collection."""
+        result = await handle_find_cards(anki_wrapper, FindCardsParams())
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_handle_cards_to_notes(self, anki_wrapper):
@@ -303,27 +311,23 @@ class TestCardHandlers:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_handle_suspend_already_suspended_returns_true(self, anki_wrapper):
-        """Suspending an already-suspended card must return True, not False.
-
-        AnkiConnect returns True for the suspend action regardless of how
-        many cards were actually newly suspended. Previously we returned
-        False when suspend_cards reported count=0 (e.g. already suspended),
-        which clients interpret as a failure.
-        """
+    async def test_handle_suspend_already_suspended_returns_false(self, anki_wrapper):
+        """Suspending an already-suspended card returns False, like the
+        reference AnkiConnect plugin (Yomitan treats any non-true reply as
+        "nothing suspended")."""
         note_id = anki_wrapper.add_note(_note(front="DoubleSuspend"))
         card_ids = anki_wrapper.find_cards(f"nid:{note_id}")
         # Suspend once.
         await handle_suspend(anki_wrapper, CardsIdsParams(cards=card_ids))
-        # Suspend again -- nothing newly suspended, but must still return True.
+        # Suspend again -- nothing newly suspended, so False is returned.
         result = await handle_suspend(anki_wrapper, CardsIdsParams(cards=card_ids))
-        assert result is True
+        assert result is False
 
     @pytest.mark.asyncio
-    async def test_handle_suspend_empty_list_returns_true(self, anki_wrapper):
-        """Suspending an empty card list must return True (no-op success)."""
+    async def test_handle_suspend_empty_list_returns_false(self, anki_wrapper):
+        """Suspending an empty card list returns False (nothing to suspend)."""
         result = await handle_suspend(anki_wrapper, CardsIdsParams(cards=[]))
-        assert result is True
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_handle_unsuspend(self, anki_wrapper):
@@ -505,8 +509,8 @@ class TestMultiHandler:
             ),
         )
         assert len(result) == 2
-        assert isinstance(result[0], list)  # deckNames succeeded
-        assert result[1] == {"error": "Unknown action: noSuchAction"}
+        assert isinstance(result[0], list)  # deckNames succeeded (raw result)
+        assert result[1] == {"result": None, "error": "unsupported action"}
 
     @pytest.mark.asyncio
     async def test_handle_multi_sub_action_failure_does_not_abort(self, anki_wrapper):

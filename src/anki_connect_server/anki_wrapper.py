@@ -3,21 +3,28 @@
 # anki.cards first triggers a circular import (anki.hooks -> anki.hooks_gen ->
 # anki.cards.Card while anki.cards is still initialising).
 import base64
+import hashlib
+import urllib.parse
 import logging
 import re
 import threading
 import time
+import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 from anki.collection import Collection
+from anki import lang as anki_lang
 from anki.cards import CardId
+from anki.consts import QUEUE_TYPE_SUSPENDED
 from anki.decks import DeckConfigDict, DeckConfigId, DeckId
 from anki.models import FieldDict, NotetypeDict, NotetypeId, TemplateDict
 from anki.notes import Note, NoteId
 from anki.sync_pb2 import MediaSyncStatusResponse, SyncCollectionResponse
 
 from anki_connect_server.config import get_config
+from anki_connect_server.note_builder import build_note, resolve_deck_id
 from anki_connect_server.sync import (
     CollectionSyncOutcome,
     CollectionSyncResult,
@@ -36,6 +43,8 @@ type SyncProgressCallback = Callable[[str], None]
 class AnkiWrapper:
     def __init__(self, collection_path: str) -> None:
         Collection.initialize_backend_logging()
+        if anki_lang.current_i18n is None:
+            anki_lang.set_lang("en")  # anki.utils.field_checksum needs the global i18n backend
         self.collection_path = collection_path
         self.col: Collection = Collection(collection_path)
         self._closed = False
@@ -464,33 +473,35 @@ class AnkiWrapper:
             notetype["css"] = cast(str, model["css"])
         self.col.models.update(notetype)
 
-    def add_note(self, note: JsonObject) -> int | None:
+    def create_note(self, note: JsonObject) -> Note:
         model_name = note.get("modelName", "")
-        if not isinstance(model_name, str):
-            return None
-        notetype = self._get_model_by_name(model_name)
-        if not notetype:
-            return None
-        deck_name = note.get("deckName", "Default")
-        if not isinstance(deck_name, str):
-            deck_name = "Default"
-        deck_id = cast(DeckId, self.col.decks.id(deck_name))
-        new_note = Note(self.col, notetype)
-        fields = note.get("fields", {})
-        if isinstance(fields, dict):
-            for field_name, value in fields.items():
-                new_note[field_name] = str(value) if value is not None else ""
-        tags = note.get("tags")
-        if isinstance(tags, list):
-            new_note.tags = [str(t) for t in tags]
-        self.col.add_note(new_note, deck_id)
+        model = self._get_model_by_name(model_name if isinstance(model_name, str) else "")
+        return build_note(self.col, note, model)
+
+    def add_note(self, note: JsonObject) -> int:
+        new_note = self.create_note(note)
+        self.col.add_note(new_note, resolve_deck_id(self.col, note))
+        if not self.col.card_ids_of_note(new_note.id):
+            raise ValueError(
+                "The field values you have provided would make an empty question on all cards."
+            )
         return int(new_note.id)
 
-    def add_notes(self, notes: list[JsonObject]) -> list[int | None]:
+    def add_notes(self, notes: list[JsonObject]) -> list[int]:
         return [self.add_note(note) for note in notes]
 
     def can_add_notes(self, notes: list[JsonObject]) -> list[bool]:
-        return [bool(self.add_note(n)) for n in notes]
+        return [detail["canAdd"] is True for detail in self.can_add_notes_with_error_detail(notes)]
+
+    def can_add_notes_with_error_detail(self, notes: list[JsonObject]) -> list[JsonObject]:
+        result: list[JsonObject] = []
+        for note in notes:
+            try:
+                self.create_note(note)
+                result.append({"canAdd": True})
+            except ValueError as e:
+                result.append({"canAdd": False, "error": str(e)})
+        return result
 
     def update_note_fields(self, note: JsonObject) -> None:
         note_id = note.get("id")
@@ -524,12 +535,19 @@ class AnkiWrapper:
             try:
                 note = self.col.get_note(NoteId(note_id))
             except Exception as e:
-                logger.debug("notes_info: skipping note %s: %s", note_id, e)
+                logger.debug("notes_info: missing note %s: %s", note_id, e)
+                result.append({})
                 continue
             model = self.col.models.get(note.mid)
             fields: dict[str, JsonObject] = {}
             for i, (name, value) in enumerate(note.items()):
                 fields[name] = {"value": value, "order": i}
+            card_ids = [
+                int(card_id)
+                for card_id in self.col.db.list(  # type: ignore[union-attr]
+                    "select id from cards where nid=? order by ord", note_id
+                )
+            ]
             result.append(
                 cast(
                     JsonObject,
@@ -538,6 +556,7 @@ class AnkiWrapper:
                         "modelName": model["name"] if model else "",
                         "tags": list(note.tags),
                         "fields": fields,
+                        "cards": card_ids,
                     },
                 )
             )
@@ -563,7 +582,8 @@ class AnkiWrapper:
             try:
                 card = self.col.get_card(CardId(card_id))
             except Exception as e:
-                logger.debug("cards_info: skipping card %s: %s", card_id, e)
+                logger.debug("cards_info: missing card %s: %s", card_id, e)
+                result.append({})
                 continue
             note = card.note()
             model = self.col.models.get(note.mid)
@@ -583,16 +603,26 @@ class AnkiWrapper:
                         "ease": card.factor,
                         "question": card.q(reload=True),  # type: ignore[union-attr]
                         "answer": card.a(),  # type: ignore[union-attr]
+                        "flags": card.flags,
+                        "queue": card.queue,
                     },
                 )
             )
         return result
 
     def suspend(self, cards: list[int]) -> bool:
-        card_ids = [CardId(c) for c in cards]
-        if not card_ids:
-            return True
-        self.col.sched.suspend_cards(card_ids)
+        suspendable: list[CardId] = []
+        for card_id in cards:
+            try:
+                card = self.col.get_card(CardId(card_id))
+            except Exception:
+                logger.debug("suspend: skipping missing card %s", card_id)
+                continue
+            if card.queue != QUEUE_TYPE_SUSPENDED:
+                suspendable.append(CardId(card_id))
+        if not suspendable:
+            return False
+        self.col.sched.suspend_cards(suspendable)
         return True
 
     def unsuspend(self, cards: list[int]) -> bool:
@@ -683,19 +713,43 @@ class AnkiWrapper:
     def get_media_dir_path(self) -> str:
         return self.col.media.dir()
 
-    def store_media_file(self, filename: str, data: str) -> None:
-        file_data = base64.b64decode(data)
-        self.col.media.write_data(filename, file_data)
+    def store_media_file(
+        self,
+        filename: str = "",
+        data: str | None = None,
+        path: str | None = None,
+        url: str | None = None,
+        skip_hash: str | None = None,
+        delete_existing: bool = True,
+    ) -> str | None:
+        media_data = self._load_media_data(data, path, url)
+        if skip_hash is not None and hashlib.md5(media_data).hexdigest() == skip_hash:  # noqa: S324
+            return None
+        if delete_existing:
+            self.delete_media_file(filename)
+        return self.col.media.write_data(filename, media_data)  # type: ignore[union-attr]
+
+    @staticmethod
+    def _load_media_data(data: str | None, path: str | None, url: str | None) -> bytes:
+        if data:
+            return base64.b64decode(data)
+        if path:
+            return Path(path).read_bytes()
+        if url:
+            if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+                raise ValueError("url must use http or https")
+            with urllib.request.urlopen(url) as response:  # noqa: S310
+                return cast(bytes, response.read())
+        raise ValueError('You must provide a "data", "path", or "url" field.')
 
     def retrieve_media_file(self, filename: str) -> str | None:
-        try:
-            data = cast(bytes, self.col.media.read_data(filename))  # type: ignore[union-attr]
-            return base64.b64encode(data).decode()
-        except Exception:
+        path = Path(self.col.media.dir()) / filename  # type: ignore[union-attr]
+        if not path.is_file():
             return None
+        return base64.b64encode(path.read_bytes()).decode()
 
     def delete_media_file(self, filename: str) -> None:
-        self.col.media.delete_file(filename)  # type: ignore[union-attr]
+        self.col.media.trash_files([filename])  # type: ignore[union-attr]
 
     def import_package(self, path: str) -> JsonObject:
         return cast(JsonObject, self.col.import_anki_package(path))  # type: ignore[call-arg]

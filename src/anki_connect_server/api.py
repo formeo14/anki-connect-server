@@ -1,11 +1,11 @@
 import atexit
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from anki_connect_server.anki_wrapper import AnkiWrapper
 from anki_connect_server.asbwebsocket import (
@@ -16,7 +16,7 @@ from anki_connect_server.asbwebsocket import (
 )
 from anki_connect_server.asbwebsocket import router as asb_router
 from anki_connect_server.config import Config, get_config
-from anki_connect_server.handlers import dispatch
+from anki_connect_server.handlers import API_VERSION, dispatch, error_reply, success_reply
 from anki_connect_server.types import JsonValue
 
 logger = logging.getLogger(__name__)
@@ -70,9 +70,25 @@ class AnkiConnectRequest(BaseModel):
     params: dict[str, JsonValue] = {}
 
 
-class AnkiConnectResponse(BaseModel):
-    result: JsonValue
-    error: str | None = None
+@app.middleware("http")
+async def cors_middleware(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    origin = request.headers.get("origin", "*")
+    if request.method == "OPTIONS":
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+        if request.headers.get("access-control-request-private-network") == "true":
+            headers["Access-Control-Allow-Private-Network"] = "true"
+        return Response(status_code=200, headers=headers)
+    response = await call_next(request)
+    if "origin" in request.headers:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 
 def get_request_wrapper(request: Request) -> AnkiWrapper:
@@ -87,9 +103,16 @@ async def health() -> dict[str, str]:
     return {"status": "healthy"}
 
 
-@app.post("/", response_model=AnkiConnectResponse)
-@app.post("/api", response_model=AnkiConnectResponse)
-async def handle_request(req: AnkiConnectRequest, request: Request) -> dict[str, JsonValue]:
+@app.post("/", response_model=None)
+@app.post("/api", response_model=None)
+async def handle_request(request: Request) -> JsonValue:
+    body = await request.body()
+    if not body:
+        return {"apiVersion": f"AnkiConnect v.{API_VERSION}"}
+    try:
+        req = AnkiConnectRequest.model_validate_json(body)
+    except ValidationError as e:
+        return error_reply(str(e))
     wrapper = get_request_wrapper(request)
     try:
         asb = get_asb_server(request)
@@ -99,12 +122,12 @@ async def handle_request(req: AnkiConnectRequest, request: Request) -> dict[str,
             )
         else:
             result = await dispatch(req.action, req.params, wrapper)
-        return {"result": result, "error": None}
+        return success_reply(req.version, result)
     except ValueError as e:
         # Client-facing errors (unknown action, missing/invalid params) are
         # reported in the response body per the AnkiConnect convention with
         # HTTP 200 so existing clients keep working.
-        return {"result": None, "error": str(e)}
+        return error_reply(str(e))
     # Any other exception (corrupted collection, Anki backend crash, etc.) is
     # a server error and propagates as HTTP 500 via the handler below.
 

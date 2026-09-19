@@ -14,6 +14,14 @@ class NoteInput(TypedDict):
     tags: NotRequired[list[str]]
 
 
+class NotePayload(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    deckName: str = ""
+    modelName: str = ""
+    fields: dict[str, JsonValue] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+
+
 class CardTemplateInput(TypedDict):
     Name: str
     Front: str
@@ -56,6 +64,7 @@ class CredentialsParams(_BaseParams):
     endpoint: str | None = None
     username: str | None = None
     password: str | None = None
+    version: int | None = None
 
 
 class GetDecksParams(_BaseParams):
@@ -129,11 +138,11 @@ class NoteFieldUpdate(BaseModel):
 
 
 class AddNoteParams(_BaseParams):
-    note: NoteInput
+    note: NotePayload
 
 
 class AddNotesParams(_BaseParams):
-    notes: list[NoteInput]
+    notes: list[NotePayload]
 
 
 class UpdateNoteFieldsParams(_BaseParams):
@@ -152,11 +161,11 @@ class AddTagsParams(_BaseParams):
 
 
 class FindNotesParams(_BaseParams):
-    query: str
+    query: str | None = None
 
 
 class FindCardsParams(_BaseParams):
-    query: str
+    query: str | None = None
 
 
 class CardsIdsParams(_BaseParams):
@@ -172,7 +181,11 @@ class GetIntervalsParams(_BaseParams):
 
 class StoreMediaFileParams(_BaseParams):
     filename: str = ""
-    data: str = ""
+    data: str | None = None
+    path: str | None = None
+    url: str | None = None
+    skipHash: str | None = None
+    deleteExisting: bool = True
 
 
 class FilenameParams(_BaseParams):
@@ -196,3 +209,8 @@ class MultiParams(_BaseParams):
     # each entry's shape per-action so it can report per-action errors instead
     # of failing the whole batch on one bad entry.
     actions: list[Any] = Field(default_factory=list)
+
+
+class ApiReflectParams(_BaseParams):
+    scopes: list[str] = Field(default_factory=list)
+    actions: list[str] | None = None
