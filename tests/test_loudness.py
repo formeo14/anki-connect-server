@@ -105,3 +105,32 @@ def test_startup_measurement_only_when_auto_and_unset(
         anki_wrapper, Config(COLLECTION_PATH="x", AUDIO_NORMALIZATION=mode)
     )
     assert started == ([anki_wrapper.measure_and_store_audio_target] if expect_thread else [])
+
+
+def test_normalize_existing_media_overwrites_in_place_keeping_names(
+    anki_wrapper: AnkiWrapper, monkeypatch: pytest.MonkeyPatch
+):
+    names = ["asbp_K-ON_MixedCase_AbC.mp3", "asbp_quiet.webm", "asbp_shot.jpeg", "yomitan_w.mp3"]
+    _write_media(anki_wrapper, names)
+    monkeypatch.setattr(
+        audio,
+        "measure_loudness",
+        lambda _f, data, _s: {b"LOUD:": -19.0}.get(data[:5], -30.0),
+    )
+    monkeypatch.setattr(
+        audio,
+        "normalize_audio",
+        lambda _f, data, _s, _t: data if data.startswith(b"LOUD:") else b"LOUD:" + data,
+    )
+    results = loudness.normalize_existing_media(anki_wrapper.col, "ffmpeg", -19.0)
+    media_dir = Path(anki_wrapper.col.media.dir())  # type: ignore[union-attr]
+    assert [r.name for r in results] == ["asbp_K-ON_MixedCase_AbC.mp3", "asbp_quiet.webm"]
+    assert all((r.before_lufs, r.after_lufs) == (-30.0, -19.0) for r in results)
+    assert sorted(p.name for p in media_dir.iterdir()) == sorted(names)
+    assert (
+        media_dir / "asbp_K-ON_MixedCase_AbC.mp3"
+    ).read_bytes() == b"LOUD:asbp_K-ON_MixedCase_AbC.mp3"
+    assert (media_dir / "yomitan_w.mp3").read_bytes() == b"yomitan_w.mp3"
+
+    again = loudness.normalize_existing_media(anki_wrapper.col, "ffmpeg", -19.0, dry_run=True)
+    assert all(r.before_lufs == r.after_lufs for r in again)

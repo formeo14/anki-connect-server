@@ -5,6 +5,8 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
     parser = argparse.ArgumentParser(
         prog="anki-connect-server",
         description="Headless AnkiConnect-compatible REST API server with MCP support",
@@ -37,6 +39,16 @@ def main(argv: list[str] | None = None) -> None:
         help="Measure the collection's audio loudness and store it as the auto target",
     )
 
+    normalize_parser = subparsers.add_parser(
+        "normalize-media",
+        help="Loudness-normalize audio already in the media folder to the configured target",
+    )
+    normalize_parser.add_argument(
+        "--prefix", default="asbp_", help="Only files starting with this prefix (default: asbp_)"
+    )
+    normalize_parser.add_argument("--all", action="store_true", help="Normalize every audio file")
+    normalize_parser.add_argument("--dry-run", action="store_true", help="Measure only")
+
     args = parser.parse_args(argv)
 
     if args.command == "api":
@@ -58,6 +70,25 @@ def main(argv: list[str] | None = None) -> None:
         if target is None:
             sys.exit("No measurable audio files found in the media directory")
         sys.stdout.write(f"Stored audio normalization target: {target:.1f} LUFS\n")
+    elif args.command == "normalize-media":
+        from anki_connect_server.api import create_anki_wrapper
+
+        wrapper = create_anki_wrapper()
+        try:
+            results = wrapper.normalize_existing_media(
+                "" if args.all else args.prefix, args.dry_run
+            )
+        finally:
+            wrapper.close()
+        changed = 0
+        for item in results:
+            before = f"{item.before_lufs:.1f}" if item.before_lufs is not None else "n/a"
+            after = f"{item.after_lufs:.1f}" if item.after_lufs is not None else "n/a"
+            marker = " " if item.before_lufs == item.after_lufs else "*"
+            changed += marker == "*"
+            sys.stdout.write(f"{marker} {item.name}: {before} -> {after} LUFS\n")
+        verb = "would change" if args.dry_run else "changed"
+        sys.stdout.write(f"{len(results)} files, {changed} {verb}\n")
     else:
         parser.print_help()
         sys.exit(1)

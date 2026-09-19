@@ -766,6 +766,15 @@ class AnkiWrapper:
             return media_data
         return normalized
 
+    def normalize_existing_media(
+        self, prefix: str, dry_run: bool = False
+    ) -> list[loudness.NormalizedFile]:
+        cfg = get_config()
+        target = cfg.AUDIO_NORMALIZATION_TARGET_LUFS
+        if cfg.AUDIO_NORMALIZATION == "auto":
+            target = loudness.stored_target(self.col) or target
+        return loudness.normalize_existing_media(self.col, cfg.FFMPEG_PATH, target, prefix, dry_run)
+
     def measure_and_store_audio_target(self) -> float | None:
         target = loudness.measure_collection_target(self.col, get_config().FFMPEG_PATH)
         if target is not None:

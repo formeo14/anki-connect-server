@@ -440,6 +440,14 @@ ANKICONNECT_AUDIO_NORMALIZATION_TARGET_LUFS=-23.0
 anki-connect-server measure-loudness
 ```
 
+Audio that was stored before enabling normalization can be brought to the target in place (stop the server first; the next sync uploads the changed files):
+
+```bash
+anki-connect-server normalize-media            # asbplayer sentence clips (asbp_*)
+anki-connect-server normalize-media --all      # every audio file
+anki-connect-server normalize-media --dry-run  # report only
+```
+
 Normalization applies a static gain with a limiter (short clips keep their dynamics), skips files already within 1 LU of the target, and falls back to the original bytes when ffmpeg is missing or fails.
 
 ## 🐳 Docker
