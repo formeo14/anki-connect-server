@@ -48,6 +48,9 @@ Set environment variables before running the server:
 | `ANKICONNECT_ASB_POST_MINE_ACTION` | No | `2` | asbplayer post-mine action (0=None, 1=Open dialog, 2=Update last card, 3=Export card) |
 | `ANKICONNECT_ASB_INTERCEPT_FIELD` | No | - | Note field name to match for addNote interception (empty = intercept all) |
 | `ANKICONNECT_ASB_INTERCEPT_VALUE` | No | - | Note field value to match for addNote interception (empty = intercept all) |
+| `ANKICONNECT_AUDIO_NORMALIZATION` | No | `off` | Loudness normalization for stored audio: `off`, `fixed`, or `auto` (requires ffmpeg) |
+| `ANKICONNECT_AUDIO_NORMALIZATION_TARGET_LUFS` | No | `-23.0` | Target loudness (LUFS) for `fixed` mode and the fallback for `auto` |
+| `ANKICONNECT_FFMPEG_PATH` | No | `ffmpeg` | Path to the ffmpeg binary |
 
 ### Example `.env` File
 
@@ -402,7 +405,34 @@ Point asbplayer at the WebSocket server URL:
 ws://127.0.0.1:8765/ws
 ```
 
-In asbplayer settings, enable the WebSocket client and set the server URL to the above. The built-in server handles the rest.
+In asbplayer settings, enable the WebSocket client and set the server URL to the above, and set asbplayer's AnkiConnect URL to this server (`http://127.0.0.1:8765`). asbplayer stores the sentence audio and screenshot through this server itself after mining.
+
+### Mining Flow (Yomitan + asbplayer)
+
+1. Yomitan sends `addNote` to this server.
+2. The server adds the note and publishes `mine-subtitle` to asbplayer (update-last-card mode).
+3. asbplayer records the sentence clip and screenshot and calls `storeMediaFile` and `updateNoteFields` on this server.
+4. With `ANKICONNECT_AUDIO_NORMALIZATION` enabled, the clip is loudness-normalized on the way in (see below).
+5. `sync` pushes the note and media to AnkiWeb.
+
+### Audio Normalization
+
+Sentence clips from different sources vary a lot in volume. With ffmpeg installed the server can normalize audio stored via `storeMediaFile` or `addNote` attachments:
+
+```bash
+# off | fixed | auto
+ANKICONNECT_AUDIO_NORMALIZATION=fixed
+# Target for "fixed"; fallback for "auto" until a target has been measured
+ANKICONNECT_AUDIO_NORMALIZATION_TARGET_LUFS=-23.0
+```
+
+`auto` measures the loudness of audio already in the collection (sentence clips first) and stores that value in the collection config, so new clips match what you already have. It is measured in the background on the first start with `auto` set, or explicitly with:
+
+```bash
+anki-connect-server measure-loudness
+```
+
+Normalization applies a static gain with a limiter (short clips keep their dynamics), skips files already within 1 LU of the target, and falls back to the original bytes when ffmpeg is missing or fails.
 
 ## 🐳 Docker
 

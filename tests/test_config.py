@@ -104,3 +104,28 @@ def test_config_accepts_extensionless_path():
 
     cfg = Config(COLLECTION_PATH="/data/anki_db")
     assert cfg.COLLECTION_PATH == "/data/anki_db"
+
+
+def test_config_audio_normalization_defaults():
+    from anki_connect_server.config import Config
+
+    cfg = Config(COLLECTION_PATH="/test/path.anki2")
+    assert cfg.AUDIO_NORMALIZATION == "off"
+    assert cfg.AUDIO_NORMALIZATION_TARGET_LUFS == -23.0
+    assert cfg.FFMPEG_PATH == "ffmpeg"
+
+
+def test_config_audio_normalization_modes_are_normalized():
+    from anki_connect_server.config import Config
+
+    cfg = Config(COLLECTION_PATH="/test/path.anki2", AUDIO_NORMALIZATION=" Auto ")
+    assert cfg.AUDIO_NORMALIZATION == "auto"
+
+
+def test_config_audio_normalization_rejects_unknown_mode():
+    import pytest
+
+    from anki_connect_server.config import Config
+
+    with pytest.raises(ValueError, match="off, auto, fixed"):
+        Config(COLLECTION_PATH="/test/path.anki2", AUDIO_NORMALIZATION="deck")

@@ -1,5 +1,6 @@
 """Tests for the embedded asbplayer WebSocket server."""
 
+import base64
 import json
 import threading
 import uuid
@@ -10,7 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 
-from anki_connect_server import api
+from anki_connect_server import anki_wrapper as anki_wrapper_module
+from anki_connect_server import api, audio
 from anki_connect_server.anki_wrapper import AnkiWrapper
 from anki_connect_server.api import app, create_asb_ws_server
 from anki_connect_server.asbwebsocket import (
@@ -187,6 +189,23 @@ async def test_intercept_add_note_update_last_card_publishes_note_id():
     assert command.command == "mine-subtitle"
     assert uuid.UUID(command.messageId)
     assert command.body == {"fields": {"Front": "a"}, "postMineAction": 2, "noteId": 42}
+
+
+@pytest.mark.asyncio
+async def test_intercept_add_note_update_last_card_publishes_even_when_add_fails():
+    """Mirror the Go proxy: asbplayer is still told to mine when our own
+    addNote fails (e.g. duplicate), and the error propagates to Yomitan."""
+    server = ASBWebSocketServer(post_mine_action=PostMineAction.update_last_card)
+    ws = AsyncMock()
+    server.add_client(ws)
+
+    async def add_note() -> int:
+        raise ValueError("cannot create note because it is a duplicate")
+
+    with pytest.raises(ValueError, match="duplicate"):
+        await server.intercept_add_note({"note": {"fields": {"Front": "a"}}}, add_note)
+    command = ClientCommand.model_validate_json(ws.send_text.await_args.args[0])
+    assert command.body == {"fields": {"Front": "a"}, "postMineAction": 2}
 
 
 def test_ws_ping_pong_and_removal_on_disconnect(client: TestClient, asb: ASBWebSocketServer):
@@ -375,3 +394,66 @@ async def test_lifespan_disconnects_clients_on_shutdown(asb: ASBWebSocketServer)
         asb.add_client(AsyncMock())
     assert app.state.asb_ws_server is None
     assert not asb.has_clients
+
+
+def test_update_last_card_flow_normalizes_asbplayer_audio(
+    client: TestClient,
+    asb: ASBWebSocketServer,
+    anki_wrapper: AnkiWrapper,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """End-to-end mining round trip in the default updateLastCard mode:
+    Yomitan adds the note (version 2, raw replies) -> mine-subtitle is
+    published -> asbplayer looks up the note, stores its .webm sentence audio
+    (normalised on the way in) and writes [sound:...] into the field."""
+    asb.post_mine_action = PostMineAction.update_last_card
+    monkeypatch.setattr(
+        anki_wrapper_module,
+        "get_config",
+        lambda: Config(COLLECTION_PATH="x", AUDIO_NORMALIZATION="fixed"),
+    )
+    monkeypatch.setattr(audio, "ffmpeg_available", lambda _path: True)
+    normalized: list[tuple[str, float]] = []
+
+    def normalize(_ffmpeg: str, data: bytes, suffix: str, target: float) -> bytes:
+        normalized.append((suffix, target))
+        return b"LOUD:" + data
+
+    monkeypatch.setattr(audio, "normalize_audio", normalize)
+
+    def yomitan(action: str, params: JsonObject) -> object:
+        response = client.post("/", json={"action": action, "params": params, "version": 2})
+        assert response.status_code == 200
+        return response.json()
+
+    asbplayer = yomitan
+    with client.websocket_connect("/ws") as ws:
+        note = {
+            "deckName": "Default",
+            "modelName": "Basic",
+            "fields": {"Front": "食べる", "Back": ""},
+        }
+        note_id = yomitan("addNote", {"note": note})
+        command = json.loads(ws.receive_text())
+    assert isinstance(note_id, int)
+    assert command["body"]["noteId"] == note_id
+
+    assert asbplayer("findNotes", {"query": "added:1"}) == [note_id]
+    clip = base64.b64encode(b"opus-bytes").decode()
+    stored = asbplayer("storeMediaFile", {"filename": "asbp_clip_1.webm", "data": clip})
+    assert stored == "asbp_clip_1.webm"
+    info = asbplayer("notesInfo", {"notes": [note_id]})
+    assert info[0]["fields"]["Back"]["value"] == ""
+    asbplayer(
+        "updateNoteFields",
+        {"note": {"id": note_id, "fields": {"Back": "[sound:asbp_clip_1.webm]"}}},
+    )
+
+    assert normalized == [(".webm", -23.0)]
+    assert (
+        anki_wrapper.retrieve_media_file("asbp_clip_1.webm")
+        == base64.b64encode(b"LOUD:opus-bytes").decode()
+    )
+    assert anki_wrapper.notes_info([note_id])[0]["fields"]["Back"]["value"] == (
+        "[sound:asbp_clip_1.webm]"
+    )

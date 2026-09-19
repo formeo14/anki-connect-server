@@ -40,12 +40,24 @@ class Config(BaseSettings):
     ASB_INTERCEPT_FIELD: str = ""
     ASB_INTERCEPT_VALUE: str = ""
 
+    AUDIO_NORMALIZATION: str = "off"
+    AUDIO_NORMALIZATION_TARGET_LUFS: float = -23.0
+    FFMPEG_PATH: str = "ffmpeg"
+
     @field_validator("COLLECTION_PATH")
     @classmethod
     def _validate_collection_path(cls, v: str) -> str:
         if not v:
             return _default_collection_path()
         return v
+
+    @field_validator("AUDIO_NORMALIZATION")
+    @classmethod
+    def _validate_audio_normalization(cls, v: str) -> str:
+        value = v.strip().lower()
+        if value not in {"off", "auto", "fixed"}:
+            raise ValueError("AUDIO_NORMALIZATION must be one of: off, auto, fixed")
+        return value
 
 
 @cache

@@ -23,8 +23,10 @@ from anki.models import FieldDict, NotetypeDict, NotetypeId, TemplateDict
 from anki.notes import Note, NoteId
 from anki.sync_pb2 import MediaSyncStatusResponse, SyncCollectionResponse
 
+from anki_connect_server import audio, loudness
 from anki_connect_server.config import get_config
 from anki_connect_server.note_builder import build_note, resolve_deck_id
+from anki_connect_server.note_media import attach_note_media
 from anki_connect_server.sync import (
     CollectionSyncOutcome,
     CollectionSyncResult,
@@ -480,6 +482,7 @@ class AnkiWrapper:
 
     def add_note(self, note: JsonObject) -> int:
         new_note = self.create_note(note)
+        attach_note_media(new_note, note, self.store_media_file)
         self.col.add_note(new_note, resolve_deck_id(self.col, note))
         if not self.col.card_ids_of_note(new_note.id):
             raise ValueError(
@@ -725,6 +728,7 @@ class AnkiWrapper:
         media_data = self._load_media_data(data, path, url)
         if skip_hash is not None and hashlib.md5(media_data).hexdigest() == skip_hash:  # noqa: S324
             return None
+        media_data = self._maybe_normalize_audio(filename, media_data)
         if delete_existing:
             self.delete_media_file(filename)
         return self.col.media.write_data(filename, media_data)  # type: ignore[union-attr]
@@ -741,6 +745,30 @@ class AnkiWrapper:
             with urllib.request.urlopen(url) as response:  # noqa: S310
                 return cast(bytes, response.read())
         raise ValueError('You must provide a "data", "path", or "url" field.')
+
+    def _maybe_normalize_audio(self, filename: str, media_data: bytes) -> bytes:
+        cfg = get_config()
+        if cfg.AUDIO_NORMALIZATION == "off" or not audio.is_audio_file(filename):
+            return media_data
+        if not audio.ffmpeg_available(cfg.FFMPEG_PATH):
+            logger.warning("Audio normalization skipped for %s: ffmpeg not available", filename)
+            return media_data
+        target = cfg.AUDIO_NORMALIZATION_TARGET_LUFS
+        if cfg.AUDIO_NORMALIZATION == "auto":
+            target = loudness.stored_target(self.col) or target
+        normalized = audio.normalize_audio(
+            cfg.FFMPEG_PATH, media_data, Path(filename).suffix, target
+        )
+        if normalized is None:
+            logger.warning("Audio normalization failed for %s; storing original bytes", filename)
+            return media_data
+        return normalized
+
+    def measure_and_store_audio_target(self) -> float | None:
+        target = loudness.measure_collection_target(self.col, get_config().FFMPEG_PATH)
+        if target is not None:
+            loudness.store_target(self.col, target)
+        return target
 
     def retrieve_media_file(self, filename: str) -> str | None:
         path = Path(self.col.media.dir()) / filename  # type: ignore[union-attr]

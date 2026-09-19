@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+### Added
+- Optional ffmpeg loudness normalization for stored audio
+  (`ANKICONNECT_AUDIO_NORMALIZATION=fixed|auto`), an `auto` target measured
+  from the collection and persisted in its config, and a
+  `measure-loudness` CLI command. The Docker image now ships ffmpeg.
+- `addNote` honours `audio`, `video` and `picture` attachments like the
+  reference AnkiConnect plugin (asbplayer export-card mode, Yomitan word audio).
+
+### Fixed
+- In update-last-card mode asbplayer is notified even when the note could not
+  be added, matching the reference Go proxy.
+
 ## [0.3.0] - 2026-08-05
 
 ### Added

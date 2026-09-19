@@ -202,6 +202,49 @@ async def test_yomitan_deck_scoped_duplicate_check(app_with_wrapper):
 
 
 @pytest.mark.asyncio
+async def test_yomitan_add_note_attachments(app_with_wrapper):
+    """Yomitan (word audio) and asbplayer exportCard both attach media through
+    the AnkiConnect note.audio / note.picture objects: the file is stored and a
+    [sound:..] / <img> reference is appended to the listed fields."""
+    audio_data = base64.b64encode(b"forvo").decode()
+    picture_data = base64.b64encode(b"png").decode()
+    note = yomitan_note()
+    note["audio"] = [
+        {"filename": "yomitan_audio_1.mp3", "data": audio_data, "fields": ["Back"]},
+        {"filename": "ignored.mp3", "data": audio_data, "fields": ["NoSuchField"]},
+    ]
+    note["picture"] = {"filename": "asbp_shot.jpeg", "data": picture_data, "fields": ["Back"]}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await yomitan_invoke(client, "addNote", {"note": note})
+        note_id = response.json()
+        assert isinstance(note_id, int)
+
+        response = await yomitan_invoke(client, "notesInfo", {"notes": [note_id]})
+        back = response.json()[0]["fields"]["Back"]["value"]
+        assert back == 'Hello[sound:yomitan_audio_1.mp3]<img src="asbp_shot.jpeg">'
+
+        response = await yomitan_invoke(client, "retrieveMediaFile", {"filename": "asbp_shot.jpeg"})
+        assert response.json() == picture_data
+        response = await yomitan_invoke(client, "retrieveMediaFile", {"filename": "ignored.mp3"})
+        assert response.json() is None
+
+
+@pytest.mark.asyncio
+async def test_yomitan_can_add_notes_ignores_attachments(app_with_wrapper):
+    note = yomitan_note()
+    note["audio"] = {
+        "filename": "probe.mp3",
+        "data": base64.b64encode(b"x").decode(),
+        "fields": ["Back"],
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await yomitan_invoke(client, "canAddNotes", {"notes": [note]})
+        assert response.json() == [True]
+        response = await yomitan_invoke(client, "retrieveMediaFile", {"filename": "probe.mp3"})
+        assert response.json() is None
+
+
+@pytest.mark.asyncio
 async def test_yomitan_can_add_notes_does_not_insert(app_with_wrapper):
     """Yomitan canAddNotes: must be validate-only (no insertion). After calling
     canAddNotes with a new note, findNotes must confirm it was not created."""
@@ -321,8 +364,12 @@ async def test_yomitan_gui_actions_report_unsupported(app_with_wrapper):
     """Yomitan viewNotes: guiEditNote falls back to guiBrowse only when the
     server reports "unsupported action"; a headless server has no GUI, so both
     must report exactly that instead of pretending to succeed."""
+    unsupported_gui_calls: list[tuple[str, dict[str, JsonValue]]] = [
+        ("guiEditNote", {"note": 1}),
+        ("guiBrowse", {"query": "nid:1"}),
+    ]
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        for action, params in (("guiEditNote", {"note": 1}), ("guiBrowse", {"query": "nid:1"})):
+        for action, params in unsupported_gui_calls:
             response = await yomitan_invoke(client, action, params)
             assert response.status_code == 200
             assert response.json() == {"result": None, "error": "unsupported action"}

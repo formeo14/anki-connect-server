@@ -116,7 +116,11 @@ class ASBWebSocketServer:
         )
 
         if self.post_mine_action == PostMineAction.update_last_card:
-            result = await add_note()
+            try:
+                result = await add_note()
+            except ValueError:
+                await self.publish_message(command)
+                raise
             if isinstance(result, int):
                 command.body["noteId"] = result
             await self.publish_message(command)

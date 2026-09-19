@@ -32,6 +32,11 @@ def main(argv: list[str] | None = None) -> None:
         "(single long-lived server serving all clients). Default: stdio.",
     )
 
+    subparsers.add_parser(
+        "measure-loudness",
+        help="Measure the collection's audio loudness and store it as the auto target",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "api":
@@ -42,6 +47,17 @@ def main(argv: list[str] | None = None) -> None:
         from anki_connect_server.mcp_server import run
 
         run(transport=args.transport)
+    elif args.command == "measure-loudness":
+        from anki_connect_server.api import create_anki_wrapper
+
+        wrapper = create_anki_wrapper()
+        try:
+            target = wrapper.measure_and_store_audio_target()
+        finally:
+            wrapper.close()
+        if target is None:
+            sys.exit("No measurable audio files found in the media directory")
+        sys.stdout.write(f"Stored audio normalization target: {target:.1f} LUFS\n")
     else:
         parser.print_help()
         sys.exit(1)

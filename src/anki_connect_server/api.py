@@ -1,5 +1,6 @@
 import atexit
 import logging
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from anki_connect_server import loudness
 from anki_connect_server.anki_wrapper import AnkiWrapper
 from anki_connect_server.asbwebsocket import (
     ASBWebSocketServer,
@@ -36,11 +38,19 @@ def create_asb_ws_server(config: Config | None = None) -> ASBWebSocketServer:
     )
 
 
+def start_audio_target_measurement(wrapper: AnkiWrapper, config: Config | None = None) -> None:
+    settings = config or get_config()
+    if settings.AUDIO_NORMALIZATION != "auto" or loudness.stored_target(wrapper.col) is not None:
+        return
+    threading.Thread(target=wrapper.measure_and_store_audio_target, daemon=True).start()
+
+
 @asynccontextmanager  # type: ignore[deprecated]
 async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.anki_wrapper = create_anki_wrapper()
     atexit.register(app.state.anki_wrapper.close)
     app.state.asb_ws_server = create_asb_ws_server()
+    start_audio_target_measurement(app.state.anki_wrapper)
     try:
         yield
     finally:

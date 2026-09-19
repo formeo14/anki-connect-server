@@ -13,6 +13,7 @@ Headless AnkiConnect-compatible REST API server with AnkiWeb sync support and MC
 - **No Anki Desktop Required** - Direct collection access, no Qt/GUI needed
 - **Full AnkiConnect API** - Version 6 API compatibility
 - **AnkiWeb Sync** - Automatic synchronization with your AnkiWeb account
+- **Audio Normalization** (optional) - ffmpeg-based loudness normalization of mined sentence audio to a fixed LUFS target or the measured level of your existing audio
 - **MCP Server** - Model Context Protocol integration for AI assistants
 - **Lightweight** - Python 3.12 + FastAPI on slim base image
 - **Production Ready** - Proper health checks and signal handling
@@ -67,6 +68,9 @@ services:
 | `ANKICONNECT_ANKIWEB_USER` | No | - | AnkiWeb username (for sync) |
 | `ANKICONNECT_ANKIWEB_PASS` | No | - | AnkiWeb password (for sync) |
 | `ANKICONNECT_ANKIWEB_URL` | No | - | Custom sync server URL |
+| `ANKICONNECT_AUDIO_NORMALIZATION` | No | `off` | Loudness normalization for stored audio: `off`, `fixed`, or `auto` (requires ffmpeg) |
+| `ANKICONNECT_AUDIO_NORMALIZATION_TARGET_LUFS` | No | `-23.0` | Target loudness (LUFS) for `fixed` mode and the fallback for `auto` |
+| `ANKICONNECT_FFMPEG_PATH` | No | `ffmpeg` | Path to the ffmpeg binary used for normalization |
 
 ## API Usage
 
@@ -112,6 +116,27 @@ The container includes a health check endpoint:
 curl http://localhost:8765/health
 # Returns: {"status":"healthy"}
 ```
+
+## Audio Normalization
+
+The image ships with ffmpeg. Audio that reaches the server through
+`storeMediaFile` or `addNote` attachments (asbplayer sentence clips, Yomitan
+word audio) can be loudness-normalized before it is written to the media
+folder:
+
+- `ANKICONNECT_AUDIO_NORMALIZATION=fixed` - bring every clip to
+  `ANKICONNECT_AUDIO_NORMALIZATION_TARGET_LUFS`
+- `ANKICONNECT_AUDIO_NORMALIZATION=auto` - bring every clip to the measured
+  level of the audio already in your collection. The level is measured once
+  (in the background on first start, or with
+  `anki-connect-server measure-loudness`) and stored in the collection
+  config, so it survives restarts; until it exists the fixed target is used
+- `off` (default) - bytes are stored untouched
+
+Normalization applies a static gain (with a limiter) so short clips keep their
+dynamics; clips already within 1 LU of the target are stored as-is. Files are
+regular media and sync like any other media. Without ffmpeg, or when ffmpeg
+fails on a file, the original bytes are stored.
 
 ## MCP Server
 

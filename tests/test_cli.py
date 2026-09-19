@@ -191,3 +191,36 @@ class TestCli:
 
         main(argv=["mcp"])
         assert api_calls["n"] == 0
+
+    def test_measure_loudness_subcommand_stores_target(self, monkeypatch, capsys):
+        import anki_connect_server.api as api_module
+
+        class Wrapper:
+            closed = False
+
+            def measure_and_store_audio_target(self) -> float:
+                return -21.25
+
+            def close(self) -> None:
+                self.closed = True
+
+        wrapper = Wrapper()
+        monkeypatch.setattr(api_module, "create_anki_wrapper", lambda: wrapper)
+        main(["measure-loudness"])
+        assert "-21.2 LUFS" in capsys.readouterr().out
+        assert wrapper.closed
+
+    def test_measure_loudness_subcommand_fails_without_audio(self, monkeypatch):
+        import anki_connect_server.api as api_module
+
+        class Wrapper:
+            def measure_and_store_audio_target(self) -> None:
+                return None
+
+            def close(self) -> None:
+                pass
+
+        monkeypatch.setattr(api_module, "create_anki_wrapper", lambda: Wrapper())
+        with pytest.raises(SystemExit) as exc_info:
+            main(["measure-loudness"])
+        assert "No measurable audio" in str(exc_info.value.code)
