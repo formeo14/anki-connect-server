@@ -517,7 +517,9 @@ class AnkiWrapper:
         fields = note.get("fields", {})
         if isinstance(fields, dict):
             for field_name, value in fields.items():
-                note_obj[field_name] = str(value) if value is not None else ""
+                if field_name in note_obj:
+                    note_obj[field_name] = str(value) if value is not None else ""
+        attach_note_media(note_obj, note, self.store_media_file)
         self.col.update_note(note_obj)
 
     def add_tags(self, notes: list[int], tags: str) -> None:

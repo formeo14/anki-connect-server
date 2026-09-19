@@ -5,6 +5,7 @@ import json
 import threading
 import uuid
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -421,14 +422,14 @@ def test_update_last_card_flow_normalizes_asbplayer_audio(
 
     monkeypatch.setattr(audio, "normalize_audio", normalize)
 
-    def yomitan(action: str, params: JsonObject) -> object:
+    def yomitan(action: str, params: JsonObject) -> Any:
         response = client.post("/", json={"action": action, "params": params, "version": 2})
         assert response.status_code == 200
         return response.json()
 
     asbplayer = yomitan
     with client.websocket_connect("/ws") as ws:
-        note = {
+        note: JsonObject = {
             "deckName": "Default",
             "modelName": "Basic",
             "fields": {"Front": "食べる", "Back": ""},
@@ -454,6 +455,38 @@ def test_update_last_card_flow_normalizes_asbplayer_audio(
         anki_wrapper.retrieve_media_file("asbp_clip_1.webm")
         == base64.b64encode(b"LOUD:opus-bytes").decode()
     )
-    assert anki_wrapper.notes_info([note_id])[0]["fields"]["Back"]["value"] == (
+    assert asbplayer("notesInfo", {"notes": [note_id]})[0]["fields"]["Back"]["value"] == (
         "[sound:asbp_clip_1.webm]"
+    )
+
+
+def test_asbplayer_update_note_fields_payload_is_accepted(
+    client: TestClient, anki_wrapper: AnkiWrapper
+):
+    """asbplayer sends the whole note object to updateNoteFields (deckName,
+    modelName, tags, options next to id/fields) plus field names the note type
+    may not have; the reference plugin ignores all of that."""
+    note_id = anki_wrapper.add_note(
+        {"deckName": "Default", "modelName": "Basic", "fields": {"Front": "超", "Back": ""}}
+    )
+    response = client.post(
+        "/",
+        json={
+            "action": "updateNoteFields",
+            "version": 6,
+            "params": {
+                "note": {
+                    "id": note_id,
+                    "deckName": "Default",
+                    "modelName": "Basic",
+                    "tags": [],
+                    "options": {"allowDuplicate": True, "duplicateScope": "collection"},
+                    "fields": {"Back": "[sound:asbp_clip.mp3]", "Picture": "<img src=x>"},
+                }
+            },
+        },
+    )
+    assert response.json() == {"result": None, "error": None}
+    assert anki_wrapper.notes_info([note_id])[0]["fields"]["Back"]["value"] == (  # type: ignore[index]
+        "[sound:asbp_clip.mp3]"
     )

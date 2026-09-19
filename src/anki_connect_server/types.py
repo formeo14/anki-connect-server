@@ -130,9 +130,7 @@ class ModelStylingUpdateParams(_BaseParams):
 
 
 class NoteFieldUpdate(BaseModel):
-    """A single field update inside updateNoteFields."""
-
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
     id: int
     fields: dict[str, str] = Field(default_factory=dict)
 

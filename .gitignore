@@ -18,3 +18,5 @@ build/
 coverage.xml
 anki_db
 anki_db-wal
+local-test/
+.env.local-test
