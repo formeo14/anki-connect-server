@@ -34,6 +34,8 @@ class Config(BaseSettings):
     ANKIWEB_PASS: str | None = None
 
     ANKIWEB_URL: str | None = None
+    SYNC_AFTER_MINE: bool = False
+    SYNC_AFTER_MINE_DELAY: float = 15.0
 
     # asbplayer WebSocket server settings (see asbwebsocket module).
     ASB_POST_MINE_ACTION: int = 2

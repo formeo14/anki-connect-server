@@ -1,7 +1,6 @@
 # AnkiConnect Server
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/pypi/v/anki-connect-server.svg)](https://pypi.org/project/anki-connect-server/)
 [![Docker](https://img.shields.io/badge/ghcr.io-anki--connect--server-blue)](https://github.com/formeo14/anki-connect-server/pkgs/container/anki-connect-server)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
 
@@ -45,6 +44,8 @@ Set environment variables before running the server:
 | `ANKICONNECT_ANKIWEB_USER` | No | - | AnkiWeb username (required for sync) |
 | `ANKICONNECT_ANKIWEB_PASS` | No | - | AnkiWeb password (required for sync) |
 | `ANKICONNECT_ANKIWEB_URL` | No | - | Custom sync server URL (optional) |
+| `ANKICONNECT_SYNC_AFTER_MINE` | No | `false` | Sync to AnkiWeb automatically after mining (debounced, runs in the background) |
+| `ANKICONNECT_SYNC_AFTER_MINE_DELAY` | No | `15` | Seconds of inactivity after the last mining request before the sync starts |
 | `ANKICONNECT_ASB_POST_MINE_ACTION` | No | `2` | asbplayer post-mine action (0=None, 1=Open dialog, 2=Update last card, 3=Export card) |
 | `ANKICONNECT_ASB_INTERCEPT_FIELD` | No | - | Note field name to match for addNote interception (empty = intercept all) |
 | `ANKICONNECT_ASB_INTERCEPT_VALUE` | No | - | Note field value to match for addNote interception (empty = intercept all) |
@@ -74,18 +75,20 @@ ANKICONNECT_ANKIWEB_URL=https://your-sync-server.com
 
 ### Quick Start with uvx (No Installation)
 
+`uvx` runs the server straight from this repository:
+
 ```bash
 # Run the API server
 ANKICONNECT_COLLECTION_PATH=/path/to/collection.anki2 \
 ANKICONNECT_ANKIWEB_USER=your@email.com \
 ANKICONNECT_ANKIWEB_PASS=your_password \
-uvx anki-connect-server api
+uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server api
 
 # Run the MCP server
 ANKICONNECT_COLLECTION_PATH=/path/to/collection.anki2 \
 ANKICONNECT_ANKIWEB_USER=your@email.com \
 ANKICONNECT_ANKIWEB_PASS=your_password \
-uvx anki-connect-server mcp
+uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server mcp
 ```
 
 ## 📚 API Reference
@@ -261,7 +264,7 @@ The server includes a Model Context Protocol (MCP) integration for AI assistants
 ANKICONNECT_COLLECTION_PATH=/path/to/collection.anki2 \
 ANKICONNECT_ANKIWEB_USER=your@email.com \
 ANKICONNECT_ANKIWEB_PASS=your_password \
-uvx anki-connect-server mcp
+uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server mcp
 ```
 
 ### Transports: stdio vs http
@@ -275,10 +278,10 @@ The MCP server supports two transports via `--transport`:
 
 ```bash
 # stdio (default)
-uvx anki-connect-server mcp
+uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server mcp
 
 # http
-uvx anki-connect-server mcp --transport http
+uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server mcp --transport http
 ```
 
 ### ⚠️ Concurrent MCP processes and the "already open" error
@@ -295,7 +298,7 @@ This is a **SQLite lock contention** error, not a media-sync issue — despite w
 
 1. **Use HTTP transport** (recommended for multi-client setups):
    ```bash
-   uvx anki-connect-server mcp --transport http
+   uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server mcp --transport http
    # Server runs on http://127.0.0.1:8765/mcp
    ```
    Configure your MCP client to connect to the HTTP endpoint instead of spawning a stdio process. Only one process holds the collection and serves all connections.
@@ -344,7 +347,12 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "anki-connect-server": {
       "command": "uvx",
-      "args": ["anki-connect-server", "mcp"],
+      "args": [
+        "--from",
+        "git+https://github.com/formeo14/anki-connect-server",
+        "anki-connect-server",
+        "mcp"
+      ],
       "env": {
         "ANKICONNECT_COLLECTION_PATH": "/path/to/collection.anki2",
         "ANKICONNECT_ANKIWEB_USER": "your@email.com",
@@ -360,7 +368,7 @@ Add to your `claude_desktop_config.json`:
 First start the HTTP server (e.g. as a systemd service or background process):
 
 ```bash
-uvx anki-connect-server mcp --transport http
+uvx --from git+https://github.com/formeo14/anki-connect-server anki-connect-server mcp --transport http
 ```
 
 Then point your MCP client at `http://127.0.0.1:8765/mcp`.
@@ -413,7 +421,7 @@ In asbplayer settings, enable the WebSocket client and set the server URL to the
 2. The server adds the note and publishes `mine-subtitle` to asbplayer (update-last-card mode).
 3. asbplayer records the sentence clip and screenshot and calls `storeMediaFile` and `updateNoteFields` on this server.
 4. With `ANKICONNECT_AUDIO_NORMALIZATION` enabled, the clip is loudness-normalized on the way in (see below).
-5. `sync` pushes the note and media to AnkiWeb.
+5. With `ANKICONNECT_SYNC_AFTER_MINE=true` the server syncs to AnkiWeb a few seconds after the last mining request, so the card shows up on your other devices without any client calling `sync`.
 
 ### Audio Normalization
 

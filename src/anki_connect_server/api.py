@@ -17,6 +17,7 @@ from anki_connect_server.asbwebsocket import (
     no_client_response_handler,
 )
 from anki_connect_server.asbwebsocket import router as asb_router
+from anki_connect_server.auto_sync import AutoSync
 from anki_connect_server.config import Config, get_config
 from anki_connect_server.handlers import API_VERSION, dispatch, error_reply, success_reply
 from anki_connect_server.types import JsonValue
@@ -27,6 +28,13 @@ logger = logging.getLogger(__name__)
 def create_anki_wrapper(config: Config | None = None) -> AnkiWrapper:
     settings = config or get_config()
     return AnkiWrapper(settings.COLLECTION_PATH)
+
+
+def create_auto_sync(wrapper: AnkiWrapper, config: Config | None = None) -> AutoSync | None:
+    settings = config or get_config()
+    if not settings.SYNC_AFTER_MINE:
+        return None
+    return AutoSync(wrapper.sync_to_ankiweb, settings.SYNC_AFTER_MINE_DELAY)
 
 
 def create_asb_ws_server(config: Config | None = None) -> ASBWebSocketServer:
@@ -50,10 +58,15 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.anki_wrapper = create_anki_wrapper()
     atexit.register(app.state.anki_wrapper.close)
     app.state.asb_ws_server = create_asb_ws_server()
+    app.state.auto_sync = create_auto_sync(app.state.anki_wrapper)
     start_audio_target_measurement(app.state.anki_wrapper)
     try:
         yield
     finally:
+        auto_sync: AutoSync | None = getattr(app.state, "auto_sync", None)
+        if auto_sync is not None:
+            auto_sync.cancel()
+            app.state.auto_sync = None
         wrapper: AnkiWrapper | None = getattr(app.state, "anki_wrapper", None)
         if wrapper is not None:
             wrapper.close()
@@ -132,6 +145,9 @@ async def handle_request(request: Request) -> JsonValue:
             )
         else:
             result = await dispatch(req.action, req.params, wrapper)
+        auto_sync: AutoSync | None = getattr(request.app.state, "auto_sync", None)
+        if auto_sync is not None:
+            auto_sync.schedule(req.action)
         return success_reply(req.version, result)
     except ValueError as e:
         # Client-facing errors (unknown action, missing/invalid params) are
@@ -161,6 +177,7 @@ def run_server() -> None:
     """Run the FastAPI server."""
     import uvicorn
 
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(name)s: %(message)s")
     settings = get_config()
     uvicorn.run(app, host=settings.BIND, port=settings.PORT)
 

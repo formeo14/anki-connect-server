@@ -66,6 +66,8 @@ services:
 | `ANKICONNECT_ANKIWEB_USER` | No | - | AnkiWeb username (for sync) |
 | `ANKICONNECT_ANKIWEB_PASS` | No | - | AnkiWeb password (for sync) |
 | `ANKICONNECT_ANKIWEB_URL` | No | - | Custom sync server URL |
+| `ANKICONNECT_SYNC_AFTER_MINE` | No | `false` | Sync to AnkiWeb automatically after mining (debounced, runs in the background) |
+| `ANKICONNECT_SYNC_AFTER_MINE_DELAY` | No | `15` | Seconds of inactivity after the last mining request before the sync starts |
 | `ANKICONNECT_AUDIO_NORMALIZATION` | No | `off` | Loudness normalization for stored audio: `off`, `fixed`, or `auto` (requires ffmpeg) |
 | `ANKICONNECT_AUDIO_NORMALIZATION_TARGET_LUFS` | No | `-23.0` | Target loudness (LUFS) for `fixed` mode and the fallback for `auto` |
 | `ANKICONNECT_FFMPEG_PATH` | No | `ffmpeg` | Path to the ffmpeg binary used for normalization |
@@ -173,6 +175,5 @@ docker build -t anki-connect-server .
 ## Links
 
 - [GitHub Repository](https://github.com/formeo14/anki-connect-server)
-- [PyPI Package](https://pypi.org/project/anki-connect-server/)
 - [Full Documentation](https://github.com/formeo14/anki-connect-server#readme)
 - [AnkiConnect API Reference](https://github.com/FooSoft/anki-connect)

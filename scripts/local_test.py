@@ -20,6 +20,9 @@ ANKICONNECT_COLLECTION_PATH=local-test/collection.anki2
 ANKICONNECT_PORT=8765
 ANKICONNECT_BIND=127.0.0.1
 
+# Sync to AnkiWeb automatically 15 s after the last mining request
+ANKICONNECT_SYNC_AFTER_MINE=true
+
 # asbplayer: update the note Yomitan just added with the sentence clip + screenshot
 ANKICONNECT_ASB_POST_MINE_ACTION=2
 
