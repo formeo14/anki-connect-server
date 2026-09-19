@@ -12,6 +12,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `addNote` honours `audio`, `video` and `picture` attachments like the
   reference AnkiConnect plugin (asbplayer export-card mode, Yomitan word audio).
 
+### Changed
+- Docker images are published to GitHub Container Registry
+  (`ghcr.io/formeo14/anki-connect-server`) instead of Docker Hub; the PyPI
+  publish workflow was removed.
+
 ### Fixed
 - In update-last-card mode asbplayer is notified even when the note could not
   be added, matching the reference Go proxy.

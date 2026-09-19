@@ -1,8 +1,6 @@
 # AnkiConnect Server - Docker Image
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/glechic/anki-connect-server)](https://hub.docker.com/r/glechic/anki-connect-server)
-[![Docker Version](https://img.shields.io/docker/v/glechic/anki-connect-server)](https://hub.docker.com/r/glechic/anki-connect-server)
-[![Image Size](https://img.shields.io/docker/image-size/glechic/anki-connect-server/latest)](https://hub.docker.com/r/glechic/anki-connect-server)
+[![Docker](https://img.shields.io/badge/ghcr.io-anki--connect--server-blue)](https://github.com/formeo14/anki-connect-server/pkgs/container/anki-connect-server)
 
 ## Overview
 
@@ -30,7 +28,7 @@ docker run -d \
   -e ANKICONNECT_ANKIWEB_USER=your@email.com \
   -e ANKICONNECT_ANKIWEB_PASS=your_password \
   --name anki-connect-server \
-  glechic/anki-connect-server:latest
+  ghcr.io/formeo14/anki-connect-server:latest
 ```
 
 ### Docker Compose
@@ -40,7 +38,7 @@ version: '3.8'
 
 services:
   anki-connect-server:
-    image: glechic/anki-connect-server:latest
+    image: ghcr.io/formeo14/anki-connect-server:latest
     container_name: anki-connect-server
     ports:
       - "8765:8765"
@@ -146,7 +144,7 @@ The image also includes MCP server support for AI assistants:
 docker run -d \
   -v /path/to/collection.anki2:/data/collection.anki2 \
   -e ANKICONNECT_COLLECTION_PATH=/data/collection.anki2 \
-  glechic/anki-connect-server \
+  ghcr.io/formeo14/anki-connect-server \
   uv run anki-connect-server mcp
 ```
 
@@ -167,14 +165,14 @@ docker run -d \
 ## Building from Source
 
 ```bash
-git clone https://github.com/glechic/anki-connect-server.git
+git clone https://github.com/formeo14/anki-connect-server.git
 cd anki-connect-server
 docker build -t anki-connect-server .
 ```
 
 ## Links
 
-- [GitHub Repository](https://github.com/glechic/anki-connect-server)
+- [GitHub Repository](https://github.com/formeo14/anki-connect-server)
 - [PyPI Package](https://pypi.org/project/anki-connect-server/)
-- [Full Documentation](https://github.com/glechic/anki-connect-server#readme)
+- [Full Documentation](https://github.com/formeo14/anki-connect-server#readme)
 - [AnkiConnect API Reference](https://github.com/FooSoft/anki-connect)
