@@ -8,6 +8,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from anki_connect_server.anki_wrapper import AnkiWrapper
+from anki_connect_server.asbwebsocket import (
+    ASBWebSocketServer,
+    NoClientResponseError,
+    get_asb_server,
+    no_client_response_handler,
+)
+from anki_connect_server.asbwebsocket import router as asb_router
 from anki_connect_server.config import Config, get_config
 from anki_connect_server.handlers import dispatch
 from anki_connect_server.types import JsonValue
@@ -20,10 +27,20 @@ def create_anki_wrapper(config: Config | None = None) -> AnkiWrapper:
     return AnkiWrapper(settings.COLLECTION_PATH)
 
 
+def create_asb_ws_server(config: Config | None = None) -> ASBWebSocketServer:
+    settings = config or get_config()
+    return ASBWebSocketServer(
+        post_mine_action=settings.ASB_POST_MINE_ACTION,
+        intercept_field=settings.ASB_INTERCEPT_FIELD,
+        intercept_value=settings.ASB_INTERCEPT_VALUE,
+    )
+
+
 @asynccontextmanager  # type: ignore[deprecated]
 async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.anki_wrapper = create_anki_wrapper()
     atexit.register(app.state.anki_wrapper.close)
+    app.state.asb_ws_server = create_asb_ws_server()
     try:
         yield
     finally:
@@ -31,6 +48,10 @@ async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
         if wrapper is not None:
             wrapper.close()
             app.state.anki_wrapper = None
+        asb: ASBWebSocketServer | None = getattr(app.state, "asb_ws_server", None)
+        if asb is not None:
+            await asb.disconnect_all()
+            app.state.asb_ws_server = None
 
 
 app = FastAPI(
@@ -39,6 +60,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=app_lifespan,
 )
+app.include_router(asb_router)
+app.add_exception_handler(NoClientResponseError, no_client_response_handler)
 
 
 class AnkiConnectRequest(BaseModel):
@@ -69,7 +92,13 @@ async def health() -> dict[str, str]:
 async def handle_request(req: AnkiConnectRequest, request: Request) -> dict[str, JsonValue]:
     wrapper = get_request_wrapper(request)
     try:
-        result = await dispatch(req.action, req.params, wrapper)
+        asb = get_asb_server(request)
+        if asb.should_intercept_add_note(req.action, req.params):
+            result = await asb.intercept_add_note(
+                req.params, lambda: dispatch(req.action, req.params, wrapper)
+            )
+        else:
+            result = await dispatch(req.action, req.params, wrapper)
         return {"result": result, "error": None}
     except ValueError as e:
         # Client-facing errors (unknown action, missing/invalid params) are

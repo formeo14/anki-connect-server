@@ -4,14 +4,17 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from anki_connect_server.api import app
+from anki_connect_server.asbwebsocket import ASBWebSocketServer
 
 
 @pytest.fixture
 def app_with_wrapper(anki_wrapper):
     """Attach a real AnkiWrapper to app.state for the duration of the test."""
     app.state.anki_wrapper = anki_wrapper
+    app.state.asb_ws_server = ASBWebSocketServer()
     yield anki_wrapper
     app.state.anki_wrapper = None
+    app.state.asb_ws_server = None
 
 
 @pytest.mark.asyncio

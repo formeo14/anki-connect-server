@@ -35,6 +35,11 @@ class Config(BaseSettings):
 
     ANKIWEB_URL: str | None = None
 
+    # asbplayer WebSocket server settings (see asbwebsocket module).
+    ASB_POST_MINE_ACTION: int = 2
+    ASB_INTERCEPT_FIELD: str = ""
+    ASB_INTERCEPT_VALUE: str = ""
+
     @field_validator("COLLECTION_PATH")
     @classmethod
     def _validate_collection_path(cls, v: str) -> str:

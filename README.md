@@ -22,6 +22,7 @@ Headless AnkiConnect-compatible REST API server with AnkiWeb sync support and MC
 - **Headless Operation** - No Qt/GUI required, perfect for servers and containers
 - **AnkiWeb Sync** - Automatic synchronization with AnkiWeb (optional)
 - **MCP Server** - Model Context Protocol integration for AI assistants
+- **asbplayer WebSocket Server** - Built-in WebSocket proxy for asbplayer integration
 
 ## 📋 Table of Contents
 
@@ -29,6 +30,7 @@ Headless AnkiConnect-compatible REST API server with AnkiWeb sync support and MC
 - [Usage](#-usage)
 - [API Reference](#-api-reference)
 - [MCP Server](#-mcp-server)
+- [asbplayer WebSocket Server](#-asbplayer-websocket-server)
 - [Docker](#-docker)
 
 ## ⚙️ Configuration
@@ -43,6 +45,9 @@ Set environment variables before running the server:
 | `ANKICONNECT_ANKIWEB_USER` | No | - | AnkiWeb username (required for sync) |
 | `ANKICONNECT_ANKIWEB_PASS` | No | - | AnkiWeb password (required for sync) |
 | `ANKICONNECT_ANKIWEB_URL` | No | - | Custom sync server URL (optional) |
+| `ANKICONNECT_ASB_POST_MINE_ACTION` | No | `2` | asbplayer post-mine action (0=None, 1=Open dialog, 2=Update last card, 3=Export card) |
+| `ANKICONNECT_ASB_INTERCEPT_FIELD` | No | - | Note field name to match for addNote interception (empty = intercept all) |
+| `ANKICONNECT_ASB_INTERCEPT_VALUE` | No | - | Note field value to match for addNote interception (empty = intercept all) |
 
 ### Example `.env` File
 
@@ -356,6 +361,48 @@ uvx anki-connect-server mcp --transport http
 ```
 
 Then point your MCP client at `http://127.0.0.1:8765/mcp`.
+
+## 🔗 asbplayer WebSocket Server
+
+The server includes a built-in WebSocket proxy for [asbplayer](https://github.com/asbplayer/asbplayer) integration. This replaces the standalone Go WebSocket server (`ws-server.exe`) — no separate proxy process is needed.
+
+### How It Works
+
+The server accepts WebSocket connections from asbplayer (browser extension or web app) at `ws://127.0.0.1:8765/ws`. When an `addNote` request arrives via the AnkiConnect API, the server can intercept it and publish a `mine-subtitle` command to connected asbplayer clients, allowing asbplayer to mine the subtitle and attach media to the card.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `WS` | `/ws` | WebSocket endpoint for asbplayer clients (PING/PONG, command/response) |
+| `POST` | `/asbplayer/load-subtitles` | Load subtitle files into asbplayer |
+| `POST` | `/asbplayer/seek` | Seek to a timestamp |
+| `GET` | `/asbplayer/bound-media` | Get bound media from asbplayer |
+| `GET` | `/asbplayer/subtitles` | Get subtitles from asbplayer |
+| `POST` | `/disconnect-ws-clients` | Forcefully disconnect all WebSocket clients |
+
+### Configuration
+
+```bash
+# Post-mine action when addNote is intercepted (default: 2)
+# 0 = None, 1 = Open Anki dialog, 2 = Update last card, 3 = Export card, 4 = Show update card dialog
+ANKICONNECT_ASB_POST_MINE_ACTION=2
+
+# Only intercept addNote when the note's field matches this value
+# Leave both empty to intercept all addNote requests
+ANKICONNECT_ASB_INTERCEPT_FIELD=
+ANKICONNECT_ASB_INTERCEPT_VALUE=
+```
+
+### asbplayer Setup
+
+Point asbplayer at the WebSocket server URL:
+
+```
+ws://127.0.0.1:8765/ws
+```
+
+In asbplayer settings, enable the WebSocket client and set the server URL to the above. The built-in server handles the rest.
 
 ## 🐳 Docker
 
